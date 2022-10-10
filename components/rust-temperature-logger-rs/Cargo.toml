@@ -1,0 +1,51 @@
+[package]
+name = "rust-temperature-logger-rs"
+version = "0.1.0"
+authors = ["Jonatan Borkowski <jonatan.borkowski@pm.me>"]
+edition = "2018"
+resolver = "2"
+
+[patch.crates-io]
+smol = { git = "https://github.com/esp-rs-compat/smol"}
+polling = { git = "https://github.com/esp-rs-compat/polling" }
+socket2 = { git = "https://github.com/esp-rs-compat/socket2" }
+getrandom = { version = "0.2", git = "https://github.com/esp-rs-compat/getrandom.git" }
+
+[features]
+default = ["experimental"]
+
+experimental = ["esp-idf-svc/experimental", "esp-idf-hal/experimental", "embedded-svc/experimental"]
+
+[lib]
+crate-type = ["staticlib"]
+
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
+[dependencies]
+anyhow = {version = "1", features = ["backtrace"]}
+
+esp-idf-sys = { version = "0.31", features = ["native"] }
+esp-idf-hal = "0.38"
+esp-idf-svc = "0.42.1"
+
+log = "0.4.17"
+embedded-svc = "0.22"
+embedded-hal = "0.2"
+
+shared-bus = "0.2.4"
+ssd1306 = "0.7.1"
+embedded-graphics = "0.7.1"
+profont = "0.6.1"
+
+dht-sensor = "0.2.1"
+ds1307 = "0.4.0"
+smol = "1.2"
+
+[build-dependencies]
+embuild = "0.29"
+anyhow = "1"
