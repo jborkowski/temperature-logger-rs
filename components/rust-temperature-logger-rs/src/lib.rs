@@ -5,7 +5,6 @@ use anyhow::bail;
 
 use std::{cell::RefCell, env, sync::atomic::*, sync::Arc, thread, time::*};
 use log::*;
-use smol;
 
 
 use embedded_svc::wifi::*;
