@@ -1,7 +1,7 @@
 #![allow(unused_imports)]
 use esp_idf_sys as _; // If using the `libstart` feature of `esp-idf-sys`, always keep this module imported
 
-use anyhow::bail;
+use anyhow::{bail, Result};
 
 use std::{cell::RefCell, env, sync::atomic::*, sync::Arc, thread, time::*};
 use log::*;
@@ -13,6 +13,8 @@ use embedded_svc::mqtt::client::utils::ConnState;
 use esp_idf_svc::wifi::*;
 use esp_idf_svc::ping;
 use esp_idf_svc::sysloop::*;
+use esp_idf_svc::netif::EspNetifStack;
+use esp_idf_svc::nvs::EspDefaultNvs;
 
 
 // use esp_idf_hal::delay;
@@ -95,7 +97,8 @@ fn wifi(
     {
         info!("Wifi connected");
 
-        ping(&ip_settings)?;
+        // TODO: Adjust to API change
+        // ping(&ip_settings)?;
     } else {
         bail!("Unexpected Wifi status: {:?}", status);
     }
