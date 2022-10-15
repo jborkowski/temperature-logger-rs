@@ -1,107 +1,140 @@
 #![allow(unused_imports)]
+
+mod wifi;
+
+use esp_idf_hal::i2c::Master;
 use esp_idf_sys as _; // If using the `libstart` feature of `esp-idf-sys`, always keep this module imported
 
 use anyhow::{bail, Result};
 
-use std::{cell::RefCell, env, sync::atomic::*, sync::Arc, thread, time::*};
 use log::*;
+use std::{cell::RefCell, env, sync::atomic::*, sync::Arc, thread, time::*};
+
+use embedded_svc::mqtt::client::{
+    Client, Details::Complete, Event::Received, Message, Publish, QoS,
+};
+
+use esp_idf_svc::{
+    log::EspLogger,
+    mqtt::client::{EspMqttClient, EspMqttMessage, MqttClientConfiguration},
+};
 
 
-use embedded_svc::wifi::*;
-use embedded_svc::mqtt::client::utils::ConnState;
 
-use esp_idf_svc::wifi::*;
-use esp_idf_svc::ping;
-use esp_idf_svc::sysloop::*;
-use esp_idf_svc::netif::EspNetifStack;
 use esp_idf_svc::nvs::EspDefaultNvs;
+use esp_idf_svc::nvs::*;
+use esp_idf_svc::sysloop::*;
+use esp_idf_svc::sysloop::*;
 
+use embedded_hal::blocking::delay::DelayMs;
 
-// use esp_idf_hal::delay;
-// use esp_idf_hal::gpio;
-// use esp_idf_hal::i2c;
+use esp_idf_hal::delay;
+use esp_idf_hal::gpio;
+use esp_idf_hal::i2c;
 use esp_idf_hal::prelude::*;
 use esp_idf_hal::spi;
 
+use dht_sensor::*;
+use esp_idf_sys::{esp, EspError};
+use ds1307::{DateTimeAccess, Ds1307, NaiveDate};
+
 
 #[allow(dead_code)]
-const SSID: &str = env!("RUST_ESP32_WIFI_SSID");
+const WIFI_SSID: &str = env!("RUST_ESP32_WIFI_SSID");
 #[allow(dead_code)]
-const PASS: &str = env!("RUST_ESP32_WIFI_PASS");
+const WIFI_PASS: &str = env!("RUST_ESP32_WIFI_PASS");
+#[allow(dead_code)]
+const MQTT_USER: &str = env!("RUST_ESP32_MQTT_USER");
+#[allow(dead_code)]
+const MQTT_PASS: &str = env!("RUST_ESP32_MQTT_PASS");
+#[allow(dead_code)]
+const MQTT_HOST: &str = env!("RUST_ESP32_MQTT_HOST");
 
 #[no_mangle]
-extern "C" fn rust_main() -> i32 {
+extern "C" fn rust_main() -> ! {
     // Temporary. Will disappear once ESP-IDF 4.4 is released, but for now it is necessary to call this function once,
     // or else some patches to the runtime implemented by esp-idf-sys might not link properly.
     esp_idf_sys::link_patches();
 
-    println!("Hello world from Rust!");
+    EspLogger::initialize_default();
 
-    42
+    let peripherals = Peripherals::take().unwrap();
+    let pins = peripherals.pins;
+
+    let mut delay = delay::Ets;
+
+    let mut _wifi = wifi::wifi(WIFI_SSID, WIFI_PASS).unwrap();
+
+    let mqtt_config = MqttClientConfiguration::default();
+
+    let broker_url = format!("mqtt://{}:{}@{}", MQTT_USER, MQTT_PASS, MQTT_HOST);
+
+    delay.delay_ms(2000 as u32);
+    let mut mqtt_client = EspMqttClient::new(broker_url, &mqtt_config, move |message_event| {
+        if let Ok(Received(message)) = message_event {
+            process_message(message);
+        }
+    })
+    .unwrap();
+
+    let i2c = i2c(peripherals.i2c0, pins.gpio0, pins.gpio1);
+    let mut rtc = Ds1307::new(i2c);
+
+    // let datetime = NaiveDate::from_ymd(2022, 10, 16).and_hms(0, 29, 10);
+    //  rtc.set_datetime(&datetime).unwrap();
+    rtc.halt().unwrap();
+
+    let mut data = pins.gpio4.into_input_output().unwrap();
+
+    loop {
+        match dht22::Reading::read(&mut delay, &mut data) {
+            Ok(dht22::Reading {
+                temperature,
+                relative_humidity,
+            }) => {
+
+		info!("[{}] Temperature: {}°, Humidity {} % RHr", rtc.datetime().unwrap(), temperature, relative_humidity);
+                mqtt_client
+                    .publish(
+                        "temperature/office",
+                        QoS::AtLeastOnce,
+                        false,
+                        &temperature.to_be_bytes() as &[u8],
+                    )
+                    .unwrap();
+
+                mqtt_client
+                    .publish(
+                        "humidity/office",
+                        QoS::AtLeastOnce,
+                        false,
+                        &relative_humidity.to_be_bytes() as &[u8],
+                    )
+                    .unwrap();
+            }
+            Err(e) => println!("Error {:?}", e),
+        }
+        delay.delay_ms(1000 as u32);
+    }
 }
 
-
-#[allow(dead_code)]
-fn wifi(
-    netif_stack: Arc<EspNetifStack>,
-    sys_loop_stack: Arc<EspSysLoopStack>,
-    default_nvs: Arc<EspDefaultNvs>,
-) -> Result<Box<EspWifi>> {
-    let mut wifi = Box::new(EspWifi::new(netif_stack, sys_loop_stack, default_nvs)?);
-
-    info!("Wifi created, about to scan");
-
-    let ap_infos = wifi.scan()?;
-
-    let ours = ap_infos.into_iter().find(|a| a.ssid == SSID);
-
-    let channel = if let Some(ours) = ours {
-        info!(
-            "Found configured access point {} on channel {}",
-            SSID, ours.channel
-        );
-        Some(ours.channel)
-    } else {
-        info!(
-            "Configured access point {} not found during scanning, will go with unknown channel",
-            SSID
-        );
-        None
-    };
-
-    wifi.set_configuration(&Configuration::Mixed(
-        ClientConfiguration {
-            ssid: SSID.into(),
-            password: PASS.into(),
-            channel,
-            ..Default::default()
-        },
-        AccessPointConfiguration {
-            ssid: "aptest".into(),
-            channel: channel.unwrap_or(1),
-            ..Default::default()
-        },
-    ))?;
-
-    info!("Wifi configuration set, about to get status");
-
-    wifi.wait_status_with_timeout(Duration::from_secs(20), |status| !status.is_transitional())
-        .map_err(|e| anyhow::anyhow!("Unexpected Wifi status: {:?}", e))?;
-
-    let status = wifi.get_status();
-
-    if let Status(
-        ClientStatus::Started(ClientConnectionStatus::Connected(ClientIpStatus::Done(ip_settings))),
-        ApStatus::Started(ApIpStatus::Done),
-    ) = status
-    {
-        info!("Wifi connected");
-
-        // TODO: Adjust to API change
-        // ping(&ip_settings)?;
-    } else {
-        bail!("Unexpected Wifi status: {:?}", status);
+fn process_message(message: &EspMqttMessage) {
+    match message.details() {
+        Complete => {
+            info!("{}", message.topic().unwrap());
+            //            let message_data: &[u8] = &message.data();
+        }
+        _ => error!("Unsupported command."),
     }
+}
 
-    Ok(wifi)
+fn i2c(
+    i2c: i2c::I2C0,
+    sda: gpio::Gpio0<gpio::Unknown>,
+    scl: gpio::Gpio1<gpio::Unknown>,
+) -> Master<i2c::I2C0, gpio::Gpio0<gpio::Unknown>, gpio::Gpio1<gpio::Unknown>,
+> {
+    let config = <i2c::config::MasterConfig as Default>::default().baudrate(400.kHz().into());
+
+    Master::<i2c::I2C0, _, _>::new(i2c, i2c::MasterPins { sda, scl }, config).unwrap()
 }

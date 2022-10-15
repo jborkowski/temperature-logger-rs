@@ -1,6 +1,6 @@
 # If this component depends on other components - be it ESP-IDF or project-specific ones - enumerate those in the double-quotes below, separated by spaces
 # Note that pthread should always be there, or else STD will not work
-set(RUST_DEPS "pthread" "driver" "esp_websocket_client" "esp_wifi" "esp_event" "esp_netif" "nvs_flash")
+set(RUST_DEPS "pthread" "driver" "esp_websocket_client" "esp_wifi" "esp_event" "esp_netif" "nvs_flash" "mqtt")
 # Here's a non-minimal, reasonable set of ESP-IDF components that one might want enabled for Rust:
 #set(RUST_DEPS "pthread" "esp_http_client" "esp_http_server" "espcoredump" "app_update" "esp_serial_slave_link" "nvs_flash" "spi_flash" "esp_adc_cal" "mqtt")
 

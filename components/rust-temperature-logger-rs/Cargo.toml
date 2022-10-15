@@ -14,10 +14,10 @@ experimental = ["esp-idf-svc/experimental", "esp-idf-hal/experimental", "embedde
 crate-type = ["staticlib"]
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 
 [profile.dev]
-debug = true # Symbols are nice and they don't increase the size on Flash
+debug = false # Symbols are nice and they don't increase the size on Flash
 opt-level = "z"
 
 [dependencies]
@@ -25,16 +25,11 @@ anyhow = {version = "1", features = ["backtrace"]}
 
 esp-idf-sys = { version = "0.31", features = ["native"] }
 esp-idf-hal = "0.38"
-esp-idf-svc = "0.42.1"
+esp-idf-svc = { version = "0.42.1", features = ["experimental", "alloc"] }
 
 log = "0.4.17"
 embedded-svc = "0.22"
 embedded-hal = "0.2"
-
-shared-bus = "0.2.4"
-ssd1306 = "0.7.1"
-embedded-graphics = "0.7.1"
-profont = "0.6.1"
 
 dht-sensor = "0.2.1"
 ds1307 = "0.4.0"
