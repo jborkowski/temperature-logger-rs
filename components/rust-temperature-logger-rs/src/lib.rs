@@ -19,25 +19,17 @@ use esp_idf_svc::{
     mqtt::client::{EspMqttClient, EspMqttMessage, MqttClientConfiguration},
 };
 
-
-
-use esp_idf_svc::nvs::EspDefaultNvs;
-use esp_idf_svc::nvs::*;
-use esp_idf_svc::sysloop::*;
-use esp_idf_svc::sysloop::*;
-
 use embedded_hal::blocking::delay::DelayMs;
 
 use esp_idf_hal::delay;
 use esp_idf_hal::gpio;
 use esp_idf_hal::i2c;
 use esp_idf_hal::prelude::*;
-use esp_idf_hal::spi;
 
 use dht_sensor::*;
-use esp_idf_sys::{esp, EspError};
-use ds1307::{DateTimeAccess, Ds1307, NaiveDate};
+use ds1307::{DateTimeAccess, Ds1307};
 
+use serde::Serialize;
 
 #[allow(dead_code)]
 const WIFI_SSID: &str = env!("RUST_ESP32_WIFI_SSID");
@@ -49,6 +41,13 @@ const MQTT_USER: &str = env!("RUST_ESP32_MQTT_USER");
 const MQTT_PASS: &str = env!("RUST_ESP32_MQTT_PASS");
 #[allow(dead_code)]
 const MQTT_HOST: &str = env!("RUST_ESP32_MQTT_HOST");
+
+#[derive(Serialize)]
+pub struct Msg {
+    temperature: f32,
+    humidity: f32,
+    timestamp: i64
+}
 
 #[no_mangle]
 extern "C" fn rust_main() -> ! {
@@ -80,8 +79,11 @@ extern "C" fn rust_main() -> ! {
     let i2c = i2c(peripherals.i2c0, pins.gpio0, pins.gpio1);
     let mut rtc = Ds1307::new(i2c);
 
+    // TODO: handle event from mqtt to set RTC
     // let datetime = NaiveDate::from_ymd(2022, 10, 16).and_hms(0, 29, 10);
-    //  rtc.set_datetime(&datetime).unwrap();
+    // rtc.set_datetime(&datetime).unwrap();
+
+    // Rtc1307 library has bug, fn halt and running are swapped
     rtc.halt().unwrap();
 
     let mut data = pins.gpio4.into_input_output().unwrap();
@@ -93,36 +95,39 @@ extern "C" fn rust_main() -> ! {
                 relative_humidity,
             }) => {
 
-		info!("[{}] Temperature: {}°, Humidity {} % RHr", rtc.datetime().unwrap(), temperature, relative_humidity);
-                mqtt_client
-                    .publish(
-                        "temperature/office",
-                        QoS::AtLeastOnce,
-                        false,
-                        &temperature.to_be_bytes() as &[u8],
-                    )
-                    .unwrap();
+		let timestamp = rtc.datetime().unwrap();
+		info!("[{}] Temperature: {}°, Humidity {} % RHr", timestamp, temperature, relative_humidity);
+		let msg = Msg {
+		    temperature,
+		    humidity: relative_humidity,
+		    timestamp: timestamp.timestamp_millis()
+		};
+
+		let serialized = serde_json::to_vec(&msg).unwrap();
 
                 mqtt_client
                     .publish(
-                        "humidity/office",
+                        &temperature_topic("office"),
                         QoS::AtLeastOnce,
                         false,
-                        &relative_humidity.to_be_bytes() as &[u8],
+                        &serialized,
                     )
                     .unwrap();
             }
             Err(e) => println!("Error {:?}", e),
         }
-        delay.delay_ms(1000 as u32);
+        delay.delay_ms(5000 as u32);
     }
+}
+
+fn temperature_topic(client_id: &str) -> String {
+    format!("temperature/{}", client_id)
 }
 
 fn process_message(message: &EspMqttMessage) {
     match message.details() {
         Complete => {
             info!("{}", message.topic().unwrap());
-            //            let message_data: &[u8] = &message.data();
         }
         _ => error!("Unsupported command."),
     }
